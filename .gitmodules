@@ -1,0 +1,3 @@
+[submodule "uriparse"]
+	path = uriparse
+	url = https://github.com/whiler/uriparse.git
