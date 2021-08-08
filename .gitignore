@@ -1,0 +1,4 @@
+certs/
+gemini
+*.o
+*~
