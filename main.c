@@ -250,36 +250,8 @@ void strpre(char* s, const char* t)
     memcpy(s, t, len);
 }
 
-int main(int argc, char **argv)
+void setup_request(struct parsed_url *url, char *get_request)
 {
-  int exit_code = 0;
-  
-  mbedtls_net_context server_fd;
-  mbedtls_entropy_context entropy;
-  mbedtls_ctr_drbg_context ctr_drbg;
-  mbedtls_ssl_context ssl;
-  mbedtls_ssl_config conf;
-  mbedtls_x509_crt cacert;
-  char *pers = "gemini_client";
-  char certs_path[] = "./certs";
- 
-  char *server_name = malloc(255);
-  char *server_port = malloc(10);
-  char *get_request = malloc(1024);
-
-  if (argc > 1)
-    strcpy(get_request, argv[1]);
-  else
-    exit(1);
-
-  /* Parse url */
-  if (!(strstr(get_request, "://")))
-    strpre(get_request, "://");
-
-  struct parsed_url *url;
-  url = parse_url(get_request);
-
-  /* Setup request */
   char *scheme;
   char port[10];
   char *path;
@@ -317,6 +289,38 @@ int main(int argc, char **argv)
   
   sprintf(get_request, "%s://%s%s/%s%s\r\n", scheme, url->host, port, path, query);
   free(query);
+}
+
+int main(int argc, char **argv)
+{
+  int exit_code = 0;
+  
+  mbedtls_net_context server_fd;
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context ctr_drbg;
+  mbedtls_ssl_context ssl;
+  mbedtls_ssl_config conf;
+  mbedtls_x509_crt cacert;
+  char *pers = "gemini_client";
+  char certs_path[] = "./certs";
+ 
+  char *server_name = malloc(255);
+  char *server_port = malloc(10);
+  char *get_request = malloc(1024);
+
+  if (argc > 1)
+    strcpy(get_request, argv[1]);
+  else
+    exit(1);
+
+  /* Parse url */
+  if (!(strstr(get_request, "://")))
+    strpre(get_request, "://");
+
+  struct parsed_url *url;
+  url = parse_url(get_request);
+
+  setup_request(url, get_request);
 
   /* Setup server details */
 
