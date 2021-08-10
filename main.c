@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+
 #include <unistd.h>
 #include <string.h>
 
@@ -15,6 +16,7 @@
 #include <mbedtls/base64.h>
 
 #include "url_parser.h"
+#include "term.h"
 
 static void my_debug(void *ctx, int level,
                       const char *file, int line,
@@ -187,15 +189,18 @@ int request(mbedtls_ssl_context *ssl, char *request)
   return ret;
 }
 
-int read_response(mbedtls_ssl_context *ssl)
+char *read_response(mbedtls_ssl_context *ssl, char *buf, int *buflen)
 {
   int len, ret;
-  char buf[1024];
+  char tmp[1024];
+
+  buf[0] = 0;
+  
   do
     {
-      len = sizeof(buf)- 1;
-      memset(buf, 0, sizeof(buf));
-      ret = mbedtls_ssl_read(ssl, (unsigned char *) buf, len);
+      len = sizeof(tmp)- 1;
+      memset(tmp, 0, sizeof(tmp));
+      ret = mbedtls_ssl_read(ssl, (unsigned char *) tmp, len);
       
       if(ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
 	continue;
@@ -216,11 +221,15 @@ int read_response(mbedtls_ssl_context *ssl)
         }
       
       len = ret;
-      printf("%s", (char *)buf);
+
+      *buflen += len;
+      buf = realloc(buf, *buflen);
+      strcat(buf, tmp);
+      buf[*buflen-1] = 0;
     }
   while(1);
 
-  return ret;
+  return buf;
 }
 
 void close_conn(mbedtls_ssl_context *ssl)
@@ -303,15 +312,31 @@ int main(int argc, char **argv)
   mbedtls_x509_crt cacert;
   char *pers = "gemini_client";
   char certs_path[] = "./certs";
+  
+  bool isRunning = true;
+  struct winsize ws;
+  char command[100] = "";
+  unsigned long i;
+  int start_line=0;
+  static struct termios oldt;
  
   char *server_name = malloc(255);
   char *server_port = malloc(10);
   char *get_request = malloc(1024);
 
+  /*** INIT ***/
+
+  /* Args */ 
   if (argc > 1)
     strcpy(get_request, argv[1]);
   else
     exit(1);
+  
+  /* Term */ 
+  
+  oldt = setup_term();
+
+  /* Net */
 
   /* Parse url */
   if (!(strstr(get_request, "://")))
@@ -331,20 +356,80 @@ int main(int argc, char **argv)
   else
     strcpy(server_port, "1965");
   
-  /* Connect */
+  /* Net */
+
   init_session(&server_fd, &entropy, &ctr_drbg, &ssl, &conf, &cacert);
   init_rng(&entropy, &ctr_drbg, pers);
   load_tofu_certs(&cacert, certs_path);
+
+  /*** Running ***/
+
+  int buflen = 1;
+  char *buf = malloc(buflen);
+
+  /* Send recive requests */
   net_connect(&server_fd, server_name, server_port);
   config(&server_fd, &ctr_drbg, &ssl, &conf, &cacert, server_name);
   check_cert(&ssl, certs_path, server_name);
   handshake(&ssl);
   request(&ssl, get_request);
-  read_response(&ssl);
+  buf = read_response(&ssl, buf, &buflen); 
   close_conn(&ssl);
+
+  while(isRunning == true)
+    {
+      /* Screensize */
+      ioctl(STDIN_FILENO, TIOCGWINSZ, &ws);
+      
+      /* Clear screen */
+      printf("\033[H\033[2J\033[3J");
+      fflush(stdout);
+      
+      //Clears the keyboard buffer
+      fflush(stdin);
+
+      bool reached_end;
+      reached_end = print_text(buf, strlen(buf), ws, start_line);
+
+      /* Set cursor to bottom and display command */
+      printf("\033[%d;H%s", ws.ws_row, command);
+      fflush(stdout);
+
+      /* Get character */
+      switch (parse_input(getchar(), command))
+	{
+	case 0:
+	  break;
+	case 1:
+	  if (!strcmp(command, ":quit"))
+	    isRunning = false;
+
+	  if (!strcmp(command, ":down"))
+	    if (!reached_end)
+	      start_line++;
+
+	  if (!strcmp(command, ":up"))
+	    if (start_line > 0)
+	      start_line--;
+
+	  /* Reset command */
+	  for (i = 0; i < sizeof(command); i++)
+	    command[i] = 0x0;
+ 
+	  break;
+	}
+    }
+  free(buf);
+
+  /*** EXIT ***/
+
+  /* Net */
   free_session(&server_fd, &entropy, &ctr_drbg, &ssl, &conf, &cacert);
   free(server_name);
   free(server_port);
+
+  /* Term */
+  reset_term(oldt);
 
   if(exit_code != MBEDTLS_EXIT_SUCCESS)
     {
