@@ -69,7 +69,8 @@ int parse_input(char input, char *command)
 	  break;
 
 	case ':':
-	  strcat(command, ":"); 
+	  strcat(command, ":");
+	default:
 	  return 0;
 	}
       return 1;
