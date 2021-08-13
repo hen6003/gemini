@@ -26,7 +26,8 @@ int config(mbedtls_net_context *server_fd,
 	   mbedtls_x509_crt *cacert,
 	   char *server_name);
 
-int check_cert(mbedtls_ssl_context *ssl, char *certs_path, char *server_name);
+int check_cert(mbedtls_ssl_context *ssl, mbedtls_x509_crt *cacert,
+	       char *certs_path, char *server_name);
 
 int handshake(mbedtls_ssl_context *ssl);
 

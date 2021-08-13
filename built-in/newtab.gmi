@@ -1,0 +1,4 @@
+# New Tab
+
+=> gemini://geminispace.info/search Search
+=> gemini.circumlunar.space Project Gemini
