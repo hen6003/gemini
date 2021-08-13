@@ -23,18 +23,15 @@ struct termios setup_term()
     that means it will return if it sees a "\n" or an EOF or an EOL*/
   newt.c_lflag &= ~(ICANON|ECHO);
   
-  newt.c_lflag &= ~(IGNBRK);
+  newt.c_lflag &= ~(IGNBRK); /* Pass though ^C */
   
   newt.c_cc[VTIME]=0;
   newt.c_cc[VMIN]=1;
   
   newt.c_cflag &= ~(CBAUDEX);
   
-  if(cfsetispeed(&newt, B230400) < 0 || cfsetospeed(&newt, B230400) < 0)
-  {
-    fputs("Error", stdout);
-    return (struct termios) {0};
-  }
+  cfsetispeed(&newt, B230400);
+  cfsetospeed(&newt, B230400);
   
   /*Those new settings will be set to STDIN
     TCSANOW tells tcsetattr to change attributes immediately. */
@@ -126,7 +123,7 @@ bool print_text(char *buf, struct winsize ws,
   bool reached_end = true;
   bool line_start = true;
   bool newline = false;
-  bool preformatted_line = false;
+  bool preformatted_line = true;
   enum line_types line_type = NORMAL_LINE;
   
   for (unsigned long i = 0; i < strlen(buf); i++)
@@ -153,7 +150,10 @@ bool print_text(char *buf, struct winsize ws,
     if (newline)
     {
       ch = '\n';
-      line++;
+
+      if (line_type != PREFORMATTED_TOGGLE_LINE)
+	line++;
+
       tmpi=0;
       newline = false;
       line_start = true;
@@ -164,10 +164,25 @@ bool print_text(char *buf, struct winsize ws,
       if (line_type == PREFORMATTED_TOGGLE_LINE)
       {
 	line_type = NORMAL_LINE;
-	goto end;
+	continue;
       }
       else
 	line_type = NORMAL_LINE;
+    }
+
+    if (gemini) /* Gemini parsing */
+    {
+      if (line_start && ch == '`')
+      {
+	preformatted_tmp++;
+	
+	if (preformatted_tmp > 2)
+	  preformatted_line = !preformatted_line;
+	  
+	line_type = PREFORMATTED_TOGGLE_LINE;
+	
+	continue;
+      }
     }
     
     if (line < start_line-1)
@@ -180,34 +195,11 @@ bool print_text(char *buf, struct winsize ws,
     {
       if (preformatted_line)
       {
-	line_type = PREFORMATTED_TEXT_LINE;
-	if (line_start && ch == '`')
-	{
-	  preformatted_tmp++;
-	  
-	  if (preformatted_tmp > 2)
-	    preformatted_line = false;
-	  
-	  line_type = PREFORMATTED_TOGGLE_LINE;
-	  
-	  goto end;
-	}
-      }
-      else
-      {
 	if (line_start)
 	{
 	  switch (ch)
 	  {
-	  case '`':
-	    preformatted_tmp++;
-	    
-	    if (preformatted_tmp > 2)
-	      preformatted_line = !preformatted_line;
-	    
-	    line_type = PREFORMATTED_TOGGLE_LINE;
-	    
-	    goto end;
+
 	    
 	  case '>':
 	    line_start = false;
@@ -219,7 +211,7 @@ bool print_text(char *buf, struct winsize ws,
 	    line_type = LIST_LINE;
 	    
 	    fputs(" •", stdout);
-	    goto end;
+	    continue;
 	    
 	    break;
 	    
@@ -229,7 +221,7 @@ bool print_text(char *buf, struct winsize ws,
 	    else
 	      if (line_type < SUBSUBHEADING_LINE)
 		line_type++;
-	    goto end;
+	    continue;
 	    
 	    break;
 	    
@@ -238,14 +230,14 @@ bool print_text(char *buf, struct winsize ws,
 	    
 	  case ' ':
 	    if (line_type >= HEADING_LINE && line_type <= SUBSUBHEADING_LINE)
-	      goto end;
+	      continue;
 	    break;
 	    
 	  default: 
 	    line_start = false;
 	  }
 	}
-	
+
 	switch (line_type)
 	{
 	case NORMAL_LINE:
@@ -254,10 +246,9 @@ bool print_text(char *buf, struct winsize ws,
 	case LINK_LINE:
 	  break;
 	case PREFORMATTED_TOGGLE_LINE:
-	  goto end;
+	  continue;
 	  break;
 	case PREFORMATTED_TEXT_LINE:
-	  fputs("\e[93m", stdout);
 	  break;
 	case HEADING_LINE:
 	  fputs("\e[1;4m", stdout);
@@ -277,8 +268,6 @@ bool print_text(char *buf, struct winsize ws,
     
     putchar(ch);
     fflush(stdout);
-    
-  end:; /* Skip printing character */
   }
   
   return reached_end;
