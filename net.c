@@ -203,10 +203,7 @@ char *read_response(mbedtls_ssl_context *ssl, char *buf, int *buflen)
     }
     
     if(ret == 0)
-    {
-      fputs("\n\nEOF\n\n", stdout);
       break;
-    }
     
     len = ret;
     *buflen += len;

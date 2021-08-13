@@ -278,6 +278,7 @@ int main(int argc, char **argv)
     /* Send recive requests */
     if (new_request)
     {
+    request:
       parse_input_url(get_request, server_name, server_port, scheme);
       
       if (!strcmp(scheme, "gemini") || scheme[0] == 0)
@@ -325,6 +326,8 @@ int main(int argc, char **argv)
 	break;
       case 30: /* Redirect temporary */
       case 31: /* Redirect permanent */
+	strcpy(get_request, resp->meta);
+	goto request;
 	break;
       case 40: /* Errors */
 	strcpy(error_text, "Temporary failure");
