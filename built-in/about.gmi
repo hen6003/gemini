@@ -1,3 +1,5 @@
 # About
 
-Made by hen6003
+List of about pages
+
+=> about:help

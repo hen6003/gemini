@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #include "term.h"
 
@@ -76,6 +77,14 @@ int parse_input(char input, char *command)
     case 'k':
       strcat(command, ":up"); 
       break;
+
+    case '?':
+      strcat(command, ":help"); 
+      break;
+
+    case 'o':
+      strcat(command, ":open "); 
+      return 0;
       
     case ':':
       strcat(command, ":");
@@ -91,10 +100,13 @@ int parse_input(char input, char *command)
     case 0x7f:
       command[strlen(command)-1] = 0x0;
       break;
-    case '\n':
+    case '\n': /* Run command */
       return 1;
       break;
-    default:
+    case '\e': /* Clear on ESC */
+      memset(command, 0, strlen(command));
+      break;
+    default: 
       command[strlen(command)] = input;
       break;
     }
@@ -106,6 +118,9 @@ enum line_types
 {
   NORMAL_LINE,
   LINK_LINE,
+  LINK_LINE_LINK,
+  LINK_LINE_SPACE,
+  LINK_LINE_DESC,
   PREFORMATTED_TOGGLE_LINE,
   PREFORMATTED_TEXT_LINE,
   HEADING_LINE,
@@ -115,16 +130,18 @@ enum line_types
   QUOTE_LINE,
 };
 
-bool print_text(char *buf, struct winsize ws,
-		int start_line, bool gemini) 
+struct print_info print_text(char *buf, struct winsize ws,
+			     int start_line, bool gemini) 
 {
   char ch;
-  int tmpi=0, line=0, preformatted_tmp=0;
+  int tmpi=0, line=0, preformatted_tmp=0, links_len=0, linki=0;
   bool reached_end = true;
   bool line_start = true;
   bool newline = false;
   bool preformatted_line = true;
   enum line_types line_type = NORMAL_LINE;
+
+  char **links = {NULL};
   
   for (unsigned long i = 0; i < strlen(buf); i++)
   {
@@ -160,6 +177,16 @@ bool print_text(char *buf, struct winsize ws,
       preformatted_tmp = 0;
       fputs("\e[39;49;22;23;24;25m", stdout); /* Reset styling */
       fflush(stdout);
+
+      if (linki)
+      {
+	if (line_type == LINK_LINE_LINK)
+	  fputs(links[links_len], stdout);
+	
+	links[links_len][linki] = 0;
+	linki=0;
+	links_len++;
+      }
       
       if (line_type == PREFORMATTED_TOGGLE_LINE)
       {
@@ -185,25 +212,29 @@ bool print_text(char *buf, struct winsize ws,
       }
     }
     
-    if (line < start_line-1)
+    if (line < start_line)
       continue;
     
     if (tmpi == 1 && ch == ' ')
       continue;
     
-    if (gemini) /* Gemini parsing */
-    {
-      if (preformatted_line)
+    if (gemini && preformatted_line)
       {
 	if (line_start)
 	{
 	  switch (ch)
-	  {
-
-	    
+	  {   
 	  case '>':
+	    if (line_type != LINK_LINE)
+	      line_type = QUOTE_LINE;
+	    else
+	    {
+	      printf("(\e[5m%d\e[25m) ", links_len);
+	      links = realloc(links, (links_len+1)*sizeof(char*));
+	      links[links_len] = malloc(1025);
+	    }
+
 	    line_start = false;
-	    line_type = QUOTE_LINE;
 	    break;
 	    
 	  case '*':
@@ -224,6 +255,10 @@ bool print_text(char *buf, struct winsize ws,
 	    continue;
 	    
 	    break;
+
+	  case '=':
+	    line_type = LINK_LINE;
+	    break;
 	    
 	  case '\n':
 	    break;
@@ -234,6 +269,9 @@ bool print_text(char *buf, struct winsize ws,
 	    break;
 	    
 	  default: 
+	    if (line_type == LINK_LINE)
+	      line_type = NORMAL_LINE;
+
 	    line_start = false;
 	  }
 	}
@@ -241,14 +279,30 @@ bool print_text(char *buf, struct winsize ws,
 	switch (line_type)
 	{
 	case NORMAL_LINE:
-	case LIST_LINE:
+	case PREFORMATTED_TEXT_LINE:
+	case LIST_LINE: /* To make compiler shut up */
 	  break;
 	case LINK_LINE:
-	  break;
-	case PREFORMATTED_TOGGLE_LINE:
+	  if (ch == ' ')
+	    line_type++;
 	  continue;
 	  break;
-	case PREFORMATTED_TEXT_LINE:
+	case LINK_LINE_LINK:
+	  if (isspace(ch))
+	    line_type++;
+	  else
+	    links[links_len][linki++] = ch;
+	  continue;
+	  break;
+	case LINK_LINE_SPACE:
+	  if (isspace(ch))
+	    continue;
+	  else
+	    line_type++;
+	case LINK_LINE_DESC:
+	  break;
+	case PREFORMATTED_TOGGLE_LINE:
+	  continue; 
 	  break;
 	case HEADING_LINE:
 	  fputs("\e[1;4m", stdout);
@@ -263,12 +317,26 @@ bool print_text(char *buf, struct winsize ws,
 	  fputs("\e[3m", stdout);
 	  break;
 	}
-      }
     }
     
     putchar(ch);
     fflush(stdout);
   }
+
+  struct print_info ret;
+  ret.reached_end = reached_end;
+  ret.links = links;
+  ret.links_len = links_len;
   
-  return reached_end;
+  return ret;
+}
+
+void free_info(struct print_info pinfo)
+{
+  if (pinfo.links != NULL)
+  {
+    for (int i=0; i < pinfo.links_len; i++)
+      free(pinfo.links[i]);
+    free(pinfo.links);
+  }
 }

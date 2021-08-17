@@ -2,7 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-
+#include <libgen.h>
 #include <unistd.h>
 #include <string.h>
 
@@ -10,6 +10,18 @@
 #include "term.h"
 #include "net.h"
 
+char *remove_spaces(char *str)
+{
+  int i = 0, j = 0;
+
+  do
+    if (str[i] != ' ')
+      str[j++] = str[i];
+  while (str[i++]);
+
+  str[j] = 0;
+  return str;
+}
 
 void strpre(char* s, const char* t)
 {
@@ -155,8 +167,7 @@ void parse_input_url(char *get_request, char *server_name, char *server_port, ch
     strcpy(scheme, "file");
 
     return;
-  }
-    
+  }    
   
   struct parsed_url *url;
   url = parse_url(get_request);
@@ -220,7 +231,8 @@ int main(int argc, char **argv)
   mbedtls_x509_crt cacert;
   char *pers = "gemini_client";
   char certs_path[] = "./certs";
-  
+
+  struct print_info pinfo;
   bool is_running = true;
   struct winsize ws;
   char command[100] = "";
@@ -234,6 +246,8 @@ int main(int argc, char **argv)
   char server_port[10];
   char get_request[1025];
   char scheme[100];
+
+  pinfo.links = NULL;
   
   /*** INIT ***/
   
@@ -305,10 +319,12 @@ int main(int argc, char **argv)
       
       new_request = false;
     }
-    
+
+    /* Free current links */
+    free_info(pinfo);
+
     fputs("\e[H\e[2J\e[3J", stdout);
     
-    bool reached_end = false;
     if (!strcmp(scheme, "gemini") || scheme[0] == 0)
     {
       char error_text[20] = "";
@@ -322,7 +338,7 @@ int main(int argc, char **argv)
       case 11: /* Sensitive Input */
 	break;
       case 20: /* Print text */
-	reached_end = print_text(resp->body, ws, start_line, true);
+	pinfo = print_text(resp->body, ws, start_line, true);
 	break;
       case 30: /* Redirect temporary */
       case 31: /* Redirect permanent */
@@ -389,10 +405,10 @@ int main(int argc, char **argv)
       if (!strcmp(get_request+strlen(get_request)-3, "gmi"))
 	is_gmi = true;
 
-      reached_end = print_text(buf, ws, start_line, is_gmi);
+      pinfo = print_text(buf, ws, start_line, is_gmi);
     }
     else if (!strcmp(scheme, "about"))
-      reached_end = print_text(buf, ws, start_line, true);
+      pinfo = print_text(buf, ws, start_line, true);
     
     /* Set cursor to bottom and display command */
     
@@ -406,7 +422,8 @@ int main(int argc, char **argv)
       /* Show cursor */
       show_cursor(true);
     }
-    
+
+  input:
     printf("\e[%d;H%s", ws.ws_row, display_text);
     fflush(stdout);
     
@@ -415,49 +432,118 @@ int main(int argc, char **argv)
     
     /* Get character */
     char *token;
+    bool redraw = false;
     switch (parse_input(getchar(), command))
     {
     case 0:
       break;
-    case 1:
+    case 1:      
       token = strtok(command, " ");
       
       if (!strcmp(token, ":quit"))
+      {
 	is_running = false;
-      
-      if (!strcmp(token, ":down"))
-	if (!reached_end)
+	redraw = true;
+      }
+      else if (!strcmp(token, ":down"))
+      {
+	if (!pinfo.reached_end)
+	{
 	  start_line++;
-      
-      if (!strcmp(token, ":up"))
+	  redraw = true;
+	}
+      }
+      else if (!strcmp(token, ":up"))
+      {
 	if (start_line > 0)
+	{
 	  start_line--;
-      
-      if (!strcmp(token, ":open"))
+	  redraw = true;
+	}
+      } 
+      else if (!strcmp(token, ":open"))
       {
 	token = strtok(NULL, " ");
 	if (token != NULL)
 	{
-	  strcpy(get_request, token);
-	  new_request = true;
+	  bool isnum = true;
+	  for (unsigned long i=0; i < strlen(token); i++)
+	  {
+	    if (!(token[i] >= '0' && token[i] <= '9'))
+	    {
+	      isnum = false;
+	      break;
+	    }
+	  }
+
+	  if (isnum)
+	  {
+	    long num = strtol(token, NULL, 10);
+	    char new_get_request[1025];
+
+	    if (num < pinfo.links_len)
+	    {
+	      strcpy(new_get_request, pinfo.links[num]);
+	      
+	      if (!strstr(new_get_request, "://"))
+	      {
+		int i,j;
+	      
+		for (i = strlen(get_request); i; i--)
+		  if (get_request[i] == '/')
+		    break;
+		
+		for (j = 0; j < 1024; j++)
+		  get_request[i+j+1] = new_get_request[j];
+		
+		get_request[i+j] = 0;
+	      }
+	      else
+		strcpy(get_request, new_get_request);
+
+	      new_request = true;
+	    }
+	    else
+	      strcpy(error_msg, "Link doesn't exist");
+	  }
+	  else
+	  {
+	    strcpy(get_request, token);
+	    new_request = true;
+	  }
 	}
 	else	
 	  strcpy(error_msg, "Invalid URL");
       }
+      else if (!strcmp(token, ":help"))
+      {
+	strcpy(get_request, "about:help");
+	new_request = true;
+      }
+      else if (strcmp(token, ":")) /* Ignore empty command */
+	strcpy(error_msg, "Unknown command");
       
       /* Reset command */
       for (i = 0; i < sizeof(command); i++)
 	command[i] = 0x0;
+
+      if (new_request)
+	redraw = true;
+
+      if (!redraw)
+	goto input;
       
       break;
     }
   }
-  free(buf);
   
   /*** EXIT ***/
   
   /* Free */
   free_session(&server_fd, &entropy, &ctr_drbg, &conf, &cacert);
+  free(buf);
+  free_response(resp);
+  free_info(pinfo);
   
   /* Term */
   reset_term(oldt);

@@ -1,0 +1,17 @@
+# Help
+
+## Commands
+
+* :quit       Exit program
+* :down       Go down in the buffer
+* :up         Go up in buffer
+* :open <URL> Open a URL
+* :help       Open 'about:help'
+
+## Keybinds
+
+* :quit       ^C, q
+* :down       j
+* :up         k
+* :open       o
+* :help       ?
